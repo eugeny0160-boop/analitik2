@@ -5,14 +5,14 @@ from datetime import datetime, timedelta
 from supabase import create_client
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
+import os
 
-# === НАСТРОЙКИ ===
-TELEGRAM_TOKEN = "ВАШ_ТОКЕН"  # 🔐 Получите в @BotFather
-SOURCE_CHANNEL_ID = -1001234567890  # 🔗 ID канала, откуда читаем
-TARGET_CHANNEL_ID = -1009876543210  # 🔗 ID канала, куда отправляем отчёты
-
-SUPABASE_URL = "https://ваш-проект.supabase.co"
-SUPABASE_KEY = "ваш_anon_key"
+# === ЧТЕНИЕ ПЕРЕМЕННЫХ ИЗ ОКРУЖЕНИЯ (Render) ===
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID"))
+TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # Ключевые слова для фильтрации (в начале поста)
 RUSSIA_KEYWORDS = [
@@ -82,11 +82,11 @@ def generate_daily_report():
     return full_text[:2000]  # Лимит 2000 знаков
 
 # Отправка отчёта
-async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
+async def send_daily_report(app: Application):
     try:
         report = generate_daily_report()
-        await context.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report)
-        print(f"✅ Отчёт отправлен: {datetime.utcnow().strftime('%d.%m.%Y %H:%M')}")
+        await app.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report)
+        print(f"✅ Тестовый отчёт отправлен: {datetime.utcnow().strftime('%d.%m.%Y %H:%M')}")
 
         # Отмечаем все посты как проанализированные
         yesterday = datetime.utcnow() - timedelta(days=1)
@@ -131,11 +131,12 @@ def main():
     # Обработчик новых постов
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_new_post))
 
-    # Запуск отчёта каждый день в 21:00 МСК (18:00 UTC)
-    job_queue = app.job_queue
-    job_queue.run_daily(send_daily_report, time=datetime.strptime("21:00", "%H:%M").time(), timezone="Europe/Moscow")
+    print("🚀 Бот запущен. Ждёт посты...")
 
-    print("🚀 Бот запущен. Ждёт посты и отправит отчёт каждый день в 21:00 МСК.")
+    # === ОТПРАВИТЬ ОДИН ТЕСТОВЫЙ ОТЧЁТ СРАЗУ ПОСЛЕ ЗАПУСКА ===
+    loop = asyncio.get_event_loop()
+    loop.create_task(send_daily_report(app))
+
     app.run_polling()
 
 if __name__ == "__main__":
