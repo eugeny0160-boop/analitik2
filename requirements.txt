@@ -1,0 +1,5 @@
+python-telegram-bot==20.7
+httpx
+supabase==2.0.0
+python-dotenv
+Jinja2
