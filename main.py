@@ -90,8 +90,7 @@ def generate_report():
         return f"❌ Ошибка генерации отчёта: {e}"
 
 # Отдельная асинхронная функция для отправки отчёта
-async def send_report_async():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+async def send_report_async(app): # Передаём объект app
     try:
         report = generate_report()
         await app.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report)
@@ -129,15 +128,35 @@ def home():
 @flask_app.route("/trigger-report")
 def trigger_report():
     print("🔍 Получен запрос на генерацию отчёта от cron-job.org")
-    # Создаём новый event loop для выполнения асинхронной функции
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    success = loop.run_until_complete(send_report_async())
-    loop.close()
+    # Для этого маршрута мы НЕ создаём новый loop
+    # Мы получаем текущий loop, в который добавим задачу
+    try:
+        loop = asyncio.get_event_loop()
+        # Создаём задачу для выполнения в текущем loop
+        task = send_report_async_from_flask()
+        # Запускаем задачу и ждём результата
+        success = loop.run_until_complete(task)
+    except RuntimeError:
+        # Если loop не запущен (например, вне асинхронного контекста Flask)
+        # Создаём новый loop на время выполнения
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        try:
+            task = send_report_async_from_flask()
+            success = new_loop.run_until_complete(task)
+        finally:
+            new_loop.close()
+    
     if success:
         return jsonify({"status": "success", "message": "Отчёт успешно отправлен"}), 200
     else:
         return jsonify({"status": "error", "message": "Ошибка при отправке отчёта"}), 500
+
+# Отдельная функция для вызова из Flask
+async def send_report_async_from_flask():
+    # Создаём временное приложение для отправки отчёта
+    temp_app = Application.builder().token(TELEGRAM_TOKEN).build()
+    return await send_report_async(temp_app)
 
 def run_flask():
     flask_app.run(host="0.0.0.0", port=PORT, debug=False)
@@ -149,18 +168,29 @@ def main():
     thread.daemon = True
     thread.start()
 
-    # Запускаем бота
+    # Создаём основное приложение бота
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_channel_post))
     
     print("🚀 Бот запущен...")
-    # Отправляем отчёт сразу при запуске (как тест)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(send_report_async())
-    loop.close()
-    
-    # Запускаем polling
+
+    # --- ОТПРАВИТЬ ОТЧЁТ ПРИ ЗАПУСКЕ ---
+    # Получаем текущий loop или создаём новый
+    try:
+        loop = asyncio.get_running_loop()
+        # Если loop уже запущен, добавляем задачу
+        print("⚠️ Loop уже запущен, планируем задачу...")
+        asyncio.create_task(send_report_async(app))
+    except RuntimeError:
+        # Loop не запущен, создаём и запускаем
+        print("🔧 Создаём новый loop для отправки отчёта...")
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        new_loop.run_until_complete(send_report_async(app))
+        new_loop.close() # Можно закрыть, так как он был создан только для этого
+
+    # --- ЗАПУСТИТЬ БОТА ---
+    print("📡 Запуск Telegram polling...")
     app.run_polling()
 
 if __name__ == "__main__":
