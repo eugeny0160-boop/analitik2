@@ -5,15 +5,14 @@ from telegram.ext import Application, MessageHandler, filters
 from telegram import Update
 import os
 from flask import Flask, request, jsonify
-from telegram.request import HTTPXRequest
 
 # === Настройки ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID")) # ID вашего НОВОГО приватного канала
-TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID")) # ID публичного канала
+SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID"))  # Приватный канал, откуда читаем
+TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))  # Публичный канал, куда отправляем отчёты
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-PORT = int(os.getenv("PORT", 10000))
+PORT = int(os.getenv("PORT", 10000))  # Обязательно используем PORT от Render
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -23,7 +22,7 @@ def is_duplicate(url):
         return len(resp.data) > 0
     except Exception as e:
         print(f"❌ Ошибка проверки дубликата: {e}")
-        return False # В случае ошибки - лучше сохранить, чем потерять
+        return False
 
 def save_post(title, content, url, pub_date):
     if is_duplicate(url):
@@ -46,7 +45,6 @@ def save_post(title, content, url, pub_date):
 def generate_report():
     yesterday = datetime.utcnow() - timedelta(days=1)
     try:
-        # Получаем все непроанализированные посты за последние 24 часа
         resp = supabase.table("ingested_content_items") \
             .select("*") \
             .gte("pub_date", yesterday.isoformat()) \
@@ -58,7 +56,6 @@ def generate_report():
         if not posts:
             return "Нет новых данных за последние 24 часа."
 
-        # Группируем по source_url (по источникам)
         sources = {}
         for post in posts:
             url = post["source_url"]
@@ -66,10 +63,9 @@ def generate_report():
                 sources[url] = []
             sources[url].append(post["content"] or "Без текста")
 
-        # Формируем отчёт
         report_lines = [
             f"1. Исполнительное резюме",
-            f"За отчётный период проанализировано {len(sources)} источников.",
+            f"Проанализировано {len(sources)} источников.",
             f"Основные события касаются геополитической и экономической динамики в регионе.",
             f"",
             f"2. Обзор по источникам",
@@ -77,13 +73,13 @@ def generate_report():
 
         for url, contents in sources.items():
             report_lines.append(f"• Источник: {url}")
-            for content in contents[:1]:  # Берём только первый пост от источника
+            for content in contents[:1]:
                 clean_content = (content[:290] + "...") if len(content) > 290 else content
                 report_lines.append(f"  – {clean_content}")
 
         report_lines.append("")
         report_lines.append("3. Вывод")
-        report_lines.append("Ситуация остаётся динамичной. Требуется мониторинг ключевых событий.")
+        report_lines.append("Ситуация требует мониторинга.")
         report_lines.append(f"Отчёт сформирован: {datetime.utcnow().strftime('%d.%m.%Y %H:%M')} UTC")
 
         full_text = "\n".join(report_lines)
@@ -92,16 +88,13 @@ def generate_report():
     except Exception as e:
         return f"❌ Ошибка генерации отчёта: {e}"
 
-# Отдельная асинхронная функция для отправки отчёта
 async def send_report_async():
-    # Создаём временное приложение для отправки отчёта
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     try:
         report = generate_report()
         await app.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report)
         print("✅ Отчёт отправлен")
 
-        # Отмечаем как проанализированные
         supabase.table("ingested_content_items") \
             .update({"is_analyzed": True}) \
             .gte("pub_date", (datetime.utcnow() - timedelta(days=1)).isoformat()) \
@@ -112,29 +105,27 @@ async def send_report_async():
         print(f"❌ Ошибка отправки: {e}")
         return False
 
-# === Flask для порта и Webhook ===
+# === Flask сервер ===
 flask_app = Flask(__name__)
 
 @flask_app.route("/")
 def home():
-    return "Bot is alive", 200
+    return "🤖 Финансист-Аналитик: Бот активен и слушает webhook.", 200
 
-# Маршрут для получения webhook от Telegram
-@flask_app.route(f'/{os.getenv("TELEGRAM_TOKEN")}', methods=['POST'])
+# Webhook для Telegram — ОБЯЗАТЕЛЬНО: /ваш_токен
+@flask_app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
     try:
-        print("🔍 Получен запрос от Telegram на webhook.")
-        # Получаем JSON-данные из запроса
+        print("🔍 Получен webhook от Telegram...")
         update_json = request.get_json()
         if not update_json:
-            print("⚠️ Запрос не содержит JSON.")
+            print("⚠️ Запрос не содержит JSON")
             return jsonify({"error": "Empty JSON"}), 400
 
-        print(f"📨 Получено обновление: {update_json}") # Логируем обновление
+        print(f"📨 Получено обновление: {update_json}")
 
         update = Update.de_json(update_json)
 
-        # Обрабатываем пост, если он из нужного канала
         if update.channel_post:
             print(f"💬 Найден channel_post от чата {update.channel_post.chat.id}")
             if update.channel_post.chat.id == SOURCE_CHANNEL_ID:
@@ -147,35 +138,31 @@ def webhook():
         else:
             print("💬 Обновление не содержит channel_post.")
 
-        # Всегда возвращаем 200 OK
         return jsonify({"status": "ok"}), 200
+
     except Exception as e:
         print(f"❌ Ошибка обработки webhook: {e}")
         import traceback
-        traceback.print_exc() # Печатаем полный стек вызова для отладки
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-# Маршрут для запуска отчёта вручную
 @flask_app.route("/trigger-report")
 def trigger_report():
-    print("🔍 Получен запрос на генерацию отчёта от cron-job.org или вручную")
-    # Создаём новый event loop для выполнения асинхронной функции
+    print("🔍 Запрос на генерацию отчёта...")
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         success = loop.run_until_complete(send_report_async())
     finally:
-        loop.close() # Закрываем loop после выполнения задачи
+        loop.close()
 
     if success:
         return jsonify({"status": "success", "message": "Отчёт успешно отправлен"}), 200
     else:
         return jsonify({"status": "error", "message": "Ошибка при отправке отчёта"}), 500
 
-# === Запуск Flask ===
 def main():
     print(f"🌍 Flask сервер запущен на порту {PORT}. Ожидание webhook на /{TELEGRAM_TOKEN}...")
-    # debug=False важно для production
     flask_app.run(host='0.0.0.0', port=PORT, debug=False)
 
 if __name__ == "__main__":
