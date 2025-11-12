@@ -9,8 +9,8 @@ from flask import Flask
 
 # === Настройки ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID"))
-TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))
+SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID")) # ID приватного канала
+TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID")) # ID публичного канала
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PORT = int(os.getenv("PORT", 10000))
@@ -79,11 +79,15 @@ async def send_report(app):
     except Exception as e:
         print(f"❌ Ошибка отправки: {e}")
 
-async def handle_post(update: Update, context):
-    msg = update.message
-    if msg.chat.id != SOURCE_CHANNEL_ID: return
-    url = msg.link or f"https://t.me/c/{msg.chat.id}/{msg.message_id}"
-    save_post(msg.text[:100], msg.text, url, msg.date)
+# Обработчик для КАНАЛЬНЫХ постов (channel_post)
+async def handle_channel_post(update: Update, context):
+    post = update.channel_post
+    if post is None: return  # Защита от None
+
+    if post.chat.id != SOURCE_CHANNEL_ID: return
+
+    url = post.link or f"https://t.me/c/{post.chat.id}/{post.message_id}"
+    save_post(post.text[:100], post.text, url, post.date)
 
 # === Flask для порта ===
 flask_app = Flask(__name__)
@@ -102,7 +106,8 @@ def main():
 
     # Запускаем бота
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_post))
+    # Добавляем обработчик для channel_post
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_channel_post))
     
     print("🚀 Бот запущен...")
     # Отправляем отчёт сразу
