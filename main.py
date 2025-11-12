@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from supabase import create_client
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
@@ -15,8 +15,21 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # === ИНИЦИАЛИЗАЦИЯ ===
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Сохранить пост в базу (без проверки на дубль)
+# Проверка: был ли этот пост уже обработан?
+def is_duplicate(url: str) -> bool:
+    try:
+        response = supabase.table("ingested_content_items").select("id").eq("source_url", url).execute()
+        return len(response.data) > 0
+    except Exception as e:
+        print(f"❌ Ошибка при проверке дубликата: {e}")
+        return False # В случае ошибки - лучше принять, чем потерять
+
+# Сохранить пост в базу (только если не дубль)
 def save_post(title, content, url, pub_date):
+    if is_duplicate(url):
+        print(f"⚠️ Пропущен дубль: {url}")
+        return
+
     try:
         supabase.table("ingested_content_items").insert({
             "source_url": url,
@@ -31,23 +44,25 @@ def save_post(title, content, url, pub_date):
     except Exception as e:
         print(f"❌ Ошибка при сохранении: {e}")
 
-# Генерация отчёта (объединяет все непроанализированные посты)
+# Генерация отчёта (только посты за последние 24 часа, непроанализированные)
 def generate_daily_report():
     try:
-        # Получаем ВСЕ посты, которые ещё не проанализированы
+        # Получаем посты за последние 24 часа, которые ещё не проанализированы
+        yesterday = datetime.utcnow() - timedelta(days=1)
         response = supabase.table("ingested_content_items") \
             .select("*") \
+            .gte("pub_date", yesterday.isoformat()) \
             .eq("is_analyzed", False) \
             .order("pub_date", desc=True) \
             .execute()
 
         posts = response.data
         if not posts:
-            return "Нет новых данных для анализа."
+            return "Нет новых данных за последние 24 часа."
 
         # Формируем отчёт
         report = [
-            f"📊 Аналитический отчёт (всего постов: {len(posts)})",
+            f"📊 Аналитический отчёт (постов за 24ч: {len(posts)})",
             f"Сформирован: {datetime.utcnow().strftime('%d.%m.%Y %H:%M')} UTC",
             "",
             "📌 Последние посты:",
@@ -71,9 +86,11 @@ async def send_daily_report(app: Application):
         await app.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report)
         print(f"✅ Тестовый отчёт отправлен: {datetime.utcnow().strftime('%d.%m.%Y %H:%M')}")
 
-        # Отмечаем все посты как проанализированные
+        # Отмечаем все посты за последние 24 часа как проанализированные
+        yesterday = datetime.utcnow() - timedelta(days=1)
         supabase.table("ingested_content_items") \
             .update({"is_analyzed": True}) \
+            .gte("pub_date", yesterday.isoformat()) \
             .eq("is_analyzed", False) \
             .execute()
 
@@ -91,7 +108,7 @@ async def handle_new_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Создаём ссылку на пост
     url = message.link or f"https://t.me/c/{message.chat.id}/{message.message_id}"
 
-    # Сохраняем БЕЗ всяких фильтров
+    # Сохраняем ТОЛЬКО если это не дубль
     save_post(
         title=text[:100],
         content=text,
