@@ -114,20 +114,6 @@ async def handle_new_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pub_date=message.date
     )
 
-# === ФУНКЦИЯ ЗАПУСКА БОТА (работает в отдельном потоке) ===
-def run_bot():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_new_post))
-
-    print(f"🚀 Бот запущен в фоне. Слушает канал {SOURCE_CHANNEL_ID}...")
-
-    # === ОТПРАВИТЬ ОДИН ТЕСТОВЫЙ ОТЧЁТ СРАЗУ ПОСЛЕ ЗАПУСКА БОТА ===
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(send_daily_report_async(app))
-
-    app.run_polling()
-
 # === Flask веб-сервер ===
 flask_app = Flask(__name__)
 
@@ -135,23 +121,36 @@ flask_app = Flask(__name__)
 def home():
     return "Telegram Bot is running!", 200
 
-# Добавим маршрут для проверки состояния, если нужно
 @flask_app.route('/health')
 def health():
     return {'status': 'ok'}, 200
 
-# === ОСНОВНОЙ ЗАПУСК ===
-def main():
-    # Запускаем бота в отдельном потоке
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.daemon = True  # Поток завершится, если основной процесс завершится
-    bot_thread.start()
-
+# === ФУНКЦИЯ ЗАПУСКА Flask-сервера (работает в отдельном потоке) ===
+def run_flask():
     print(f"🌍 Flask сервер запущен на порту {PORT}. Ожидание HTTP-запросов...")
-
-    # Запускаем Flask веб-сервер на PORT, который указал Render
     # debug=False важно для production
     flask_app.run(host='0.0.0.0', port=PORT, debug=False)
+
+# === ОСНОВНОЙ ЗАПУСК ===
+def main():
+    # Запускаем Flask в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True  # Поток завершится, если основной процесс завершится
+    flask_thread.start()
+
+    # Создаём приложение бота
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_new_post))
+
+    print(f"🚀 Бот запущен. Слушает канал {SOURCE_CHANNEL_ID}...")
+
+    # === ОТПРАВИТЬ ОДИН ТЕСТОВЫЙ ОТЧЁТ СРАЗУ ПОСЛЕ ЗАПУСКА БОТА ===
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(send_daily_report_async(app))
+
+    # === ЗАПУСТИТЬ БОТА В ОСНОВНОМ ПОТОКЕ (теперь это безопасно) ===
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
