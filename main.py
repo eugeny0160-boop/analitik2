@@ -5,12 +5,12 @@ from supabase import create_client
 from telegram.ext import Application, MessageHandler, filters
 from telegram import Update
 import os
-from flask import Flask
+from flask import Flask, jsonify
 
 # === Настройки ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID")) # ID приватного канала
-TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID")) # ID публичного канала
+SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID"))
+TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PORT = int(os.getenv("PORT", 10000))
@@ -50,7 +50,8 @@ def generate_report():
             .order("pub_date", desc=True) \
             .execute()
         posts = resp.data
-        if not posts: return "Нет новых данных за последние 24 часа."
+        if not posts:
+            return "Нет новых данных за последние 24 часа."
 
         report = [
             f"📊 Аналитический отчёт ({len(posts)} постов)",
@@ -64,7 +65,9 @@ def generate_report():
     except Exception as e:
         return f"❌ Ошибка: {e}"
 
-async def send_report(app):
+# Отдельная асинхронная функция для отправки отчёта
+async def send_report_async():
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
     try:
         report = generate_report()
         await app.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report)
@@ -76,13 +79,15 @@ async def send_report(app):
             .gte("pub_date", (datetime.utcnow() - timedelta(days=1)).isoformat()) \
             .eq("is_analyzed", False) \
             .execute()
+        return True
     except Exception as e:
         print(f"❌ Ошибка отправки: {e}")
+        return False
 
 # Обработчик для КАНАЛЬНЫХ постов (channel_post)
 async def handle_channel_post(update: Update, context):
     post = update.channel_post
-    if post is None: return  # Защита от None
+    if post is None: return
 
     if post.chat.id != SOURCE_CHANNEL_ID: return
 
@@ -91,8 +96,24 @@ async def handle_channel_post(update: Update, context):
 
 # === Flask для порта ===
 flask_app = Flask(__name__)
+
 @flask_app.route("/") 
-def home(): return "Bot is alive", 200
+def home():
+    return "Bot is alive", 200
+
+# Новый маршрут для запуска отчёта через cron-job.org
+@flask_app.route("/trigger-report")
+def trigger_report():
+    print("🔍 Получен запрос на генерацию отчёта от cron-job.org")
+    # Создаём новый event loop для выполнения асинхронной функции
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    success = loop.run_until_complete(send_report_async())
+    loop.close()
+    if success:
+        return jsonify({"status": "success", "message": "Отчёт успешно отправлен"}), 200
+    else:
+        return jsonify({"status": "error", "message": "Ошибка при отправке отчёта"}), 500
 
 def run_flask():
     flask_app.run(host="0.0.0.0", port=PORT, debug=False)
@@ -106,14 +127,14 @@ def main():
 
     # Запускаем бота
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    # Добавляем обработчик для channel_post
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_channel_post))
     
     print("🚀 Бот запущен...")
-    # Отправляем отчёт сразу
+    # Отправляем отчёт сразу при запуске (как тест)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(send_report(app))
+    loop.run_until_complete(send_report_async())
+    loop.close()
     
     # Запускаем polling
     app.run_polling()
