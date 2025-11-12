@@ -9,8 +9,8 @@ from flask import Flask
 
 # === Настройки ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID")) # ID приватного канала
-TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID")) # ID публичного канала
+SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID"))
+TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PORT = int(os.getenv("PORT", 10000))
@@ -64,25 +64,35 @@ def generate_report():
     except Exception as e:
         return f"❌ Ошибка: {e}"
 
-async def send_report(app):
-    try:
-        report = generate_report()
-        await app.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report)
-        print("✅ Отчёт отправлен")
+# Функция для отправки отчёта (синхронная обертка)
+def send_report_sync():
+    async def _send_report(app):
+        try:
+            report = generate_report()
+            await app.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report)
+            print("✅ Отчёт отправлен")
 
-        # Отмечаем как проанализированные
-        supabase.table("ingested_content_items") \
-            .update({"is_analyzed": True}) \
-            .gte("pub_date", (datetime.utcnow() - timedelta(days=1)).isoformat()) \
-            .eq("is_analyzed", False) \
-            .execute()
-    except Exception as e:
-        print(f"❌ Ошибка отправки: {e}")
+            # Отмечаем как проанализированные
+            supabase.table("ingested_content_items") \
+                .update({"is_analyzed": True}) \
+                .gte("pub_date", (datetime.utcnow() - timedelta(days=1)).isoformat()) \
+                .eq("is_analyzed", False) \
+                .execute()
+        except Exception as e:
+            print(f"❌ Ошибка отправки: {e}")
 
-# Обработчик для КАНАЛЬНЫХ постов (channel_post)
+    # Создаём новый event loop для этого вызова
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # Создаём приложение для отправки
+    app_instance = Application.builder().token(TELEGRAM_TOKEN).build()
+    loop.run_until_complete(_send_report(app_instance))
+    loop.close()
+
+
 async def handle_channel_post(update: Update, context):
     post = update.channel_post
-    if post is None: return  # Защита от None
+    if post is None: return
 
     if post.chat.id != SOURCE_CHANNEL_ID: return
 
@@ -91,8 +101,14 @@ async def handle_channel_post(update: Update, context):
 
 # === Flask для порта ===
 flask_app = Flask(__name__)
-@flask_app.route("/") 
-def home(): return "Bot is alive", 200
+
+@flask_app.route("/")  # Теперь этот маршрут запускает отчёт!
+def home():
+    print("🔍 Получен HTTP-запрос. Запускаю отправку отчёта...")
+    # Запускаем отправку отчёта в отдельном потоке, чтобы не задерживать HTTP-ответ
+    thread = threading.Thread(target=send_report_sync)
+    thread.start()
+    return "Отчёт запущен. Бот активен.", 200
 
 def run_flask():
     flask_app.run(host="0.0.0.0", port=PORT, debug=False)
@@ -104,18 +120,15 @@ def main():
     thread.daemon = True
     thread.start()
 
-    # Запускаем бота
+    # Запускаем бота (только для приёма постов)
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    # Добавляем обработчик для channel_post
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_channel_post))
-    
-    print("🚀 Бот запущен...")
-    # Отправляем отчёт сразу
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(send_report(app))
-    
-    # Запускаем polling
+
+    print("🚀 Бот запущен и слушает канал...")
+    # Отправляем отчёт сразу при запуске
+    send_report_sync()
+
+    # Запускаем polling бота в основном потоке
     app.run_polling()
 
 if __name__ == "__main__":
