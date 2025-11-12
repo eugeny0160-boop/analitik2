@@ -1,11 +1,11 @@
 import asyncio
-import threading
 from datetime import datetime, timedelta
 from supabase import create_client
 from telegram.ext import Application, MessageHandler, filters
 from telegram import Update
 import os
-from flask import Flask, jsonify
+from flask import Flask, request, jsonify
+from telegram.request import HTTPXRequest
 
 # === Настройки ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -55,7 +55,7 @@ def generate_report():
         if not posts:
             return "Нет новых данных за последние 24 часа."
 
-        # Группируем по source_url (по источнику)
+        # Группируем по source_url (по источникам)
         sources = {}
         for post in posts:
             url = post["source_url"]
@@ -109,48 +109,37 @@ async def send_report_async():
         print(f"❌ Ошибка отправки: {e}")
         return False
 
-# Обработчик для КАНАЛЬНЫХ постов (channel_post)
-async def handle_channel_post(update: Update, context):
-    post = update.channel_post
-    if post is None: return
-
-    if post.chat.id != SOURCE_CHANNEL_ID: return
-
-    url = post.link or f"https://t.me/c/{post.chat.id}/{post.message_id}"
-    save_post(post.text[:100], post.text, url, post.date)
-
-# Функция для запуска Telegram-бота в отдельном потоке
-def run_telegram_bot():
-    print("📡 Запуск Telegram polling в отдельном потоке...")
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_channel_post))
-
-    # Отправляем отчёт при запуске бота (в потоке бота)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    print("🔧 Отправляем отчёт при запуске бота...")
-    loop.run_until_complete(send_report_async())
-
-    # Запускаем polling в этом же потоке
-    # ВАЖНО: Это может вызвать ту же ошибку, если loop не подходит
-    try:
-        app.run_polling()
-    except RuntimeError as e:
-        print(f"❌ Ошибка при запуске polling в потоке: {e}")
-        # Если ошибка всё равно возникает, возможно, это фатально для Web Service
-        raise e
-
-# === Flask для порта (работает в основном потоке) ===
+# === Flask для порта и Webhook ===
 flask_app = Flask(__name__)
 
 @flask_app.route("/") 
 def home():
     return "Bot is alive", 200
 
-# Новый маршрут для запуска отчёта через cron-job.org
+# Маршрут для получения webhook от Telegram
+@flask_app.route(f'/{os.getenv("TELEGRAM_TOKEN")}', methods=['POST'])
+def webhook():
+    try:
+        # Получаем JSON-данные из запроса
+        update_json = request.get_json()
+        update = Update.de_json(update_json)
+
+        # Обрабатываем пост, если он из нужного канала
+        if update.channel_post and update.channel_post.chat.id == SOURCE_CHANNEL_ID:
+            post = update.channel_post
+            url = post.link or f"https://t.me/c/{post.chat.id}/{post.message_id}"
+            save_post(post.text[:100], post.text, url, post.date)
+
+        # Всегда возвращаем 200 OK
+        return jsonify({"status": "ok"}), 200
+    except Exception as e:
+        print(f"❌ Ошибка обработки webhook: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Маршрут для запуска отчёта вручную
 @flask_app.route("/trigger-report")
 def trigger_report():
-    print("🔍 Получен запрос на генерацию отчёта от cron-job.org")
+    print("🔍 Получен запрос на генерацию отчёта от cron-job.org или вручную")
     # Создаём новый event loop для выполнения асинхронной функции
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -164,19 +153,11 @@ def trigger_report():
     else:
         return jsonify({"status": "error", "message": "Ошибка при отправке отчёта"}), 500
 
-def run_flask():
-    flask_app.run(host="0.0.0.0", port=PORT, debug=False)
-
-# === Запуск ===
+# === Запуск Flask ===
 def main():
-    # Запускаем Telegram-бота в отдельном потоке
-    # daemon=True означает, что поток завершится, если основной процесс завершится
-    bot_thread = threading.Thread(target=run_telegram_bot, daemon=True)
-    bot_thread.start()
-
-    # Запускаем Flask в основном потоке
-    print("🌍 Flask сервер запущен на порту", PORT)
-    run_flask() # Это блокирует основной поток
+    print(f"🌍 Flask сервер запущен на порту {PORT}. Ожидание webhook на /{TELEGRAM_TOKEN}...")
+    # debug=False важно для production
+    flask_app.run(host='0.0.0.0', port=PORT, debug=False)
 
 if __name__ == "__main__":
     main()
