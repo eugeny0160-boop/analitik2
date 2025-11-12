@@ -10,7 +10,7 @@ import os
 # === ЧТЕНИЕ ПЕРЕМЕННЫХ ИЗ ОКРУЖЕНИЯ (Render) ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID"))
-TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))
+TARGET_CHANNEL_ID = int(os.getenv("-2923537056"))
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
