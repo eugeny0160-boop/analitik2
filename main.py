@@ -1,19 +1,19 @@
 import asyncio
-from datetime import datetime, timedelta, timezone # <-- timezone добавлен
+from datetime import datetime, timedelta, timezone
 from supabase import create_client
-from telegram.ext import Application, MessageHandler, filters
+from telegram.ext import Application
 from telegram import Update
 import os
 from flask import Flask, request, jsonify
 
 # === Настройки ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID"))  # Приватный канал, откуда читаем
-TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))  # Публичный канал, куда отправляем отчёты
+SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID"))
+TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-# PORT больше не используется напрямую в main.py, Gunicorn его возьмёт из окружения
 
+# === Инициализация Supabase ===
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def is_duplicate(url):
@@ -33,7 +33,7 @@ def save_post(title, content, url, pub_date):
             "source_url": url,
             "title": title[:500],
             "content": content[:10000],
-            "pub_date": pub_date.isoformat(), # pub_date уже timezone-aware, если правильно сохраняется из Telegram
+            "pub_date": pub_date.isoformat(), # pub_date уже timezone-aware
             "channel_id": SOURCE_CHANNEL_ID,
             "language": "ru",
             "is_analyzed": False
@@ -67,7 +67,7 @@ def generate_report():
 
         report_lines = [
             f"1. Исполнительное резюме",
-            f"Проанализировано {len(sources)} источников.",
+            f"За отчётный период проанализировано {len(sources)} источников.",
             f"Основные события касаются геополитической и экономической динамики в регионе.",
             f"",
             f"2. Обзор по источникам",
@@ -81,7 +81,7 @@ def generate_report():
 
         report_lines.append("")
         report_lines.append("3. Вывод")
-        report_lines.append("Ситуация требует мониторинга.")
+        report_lines.append("Ситуация остаётся динамичной. Требуется мониторинг ключевых событий.")
         report_lines.append(f"Отчёт сформирован: {now.strftime('%d.%m.%Y %H:%M')} UTC")
 
         full_text = "\n".join(report_lines)
@@ -97,7 +97,7 @@ async def send_report_async():
         await app.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report)
         print("✅ Отчёт отправлен")
 
-        # Отмечаем как проанализированные
+        # Отмечаем как проанализированные за последние 24 часа
         now = datetime.now(timezone.utc)
         yesterday = now - timedelta(days=1)
         supabase.table("ingested_content_items") \
@@ -136,7 +136,6 @@ def webhook():
             if update.channel_post.chat.id == SOURCE_CHANNEL_ID:
                 print("✅ Пост из нужного канала.")
                 post = update.channel_post
-                # pub_date из Telegram уже timezone-aware
                 url = post.link or f"https://t.me/c/{post.chat.id}/{post.message_id}"
                 save_post(post.text[:100], post.text, url, post.date)
             else:
@@ -144,4 +143,27 @@ def webhook():
         else:
             print("💬 Обновление не содержит channel_post.")
 
-        return jsonify({"status": "ok"}), 
+        return jsonify({"status": "ok"}), 200
+
+    except Exception as e:
+        print(f"❌ Ошибка обработки webhook: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@flask_app.route("/trigger-report")
+def trigger_report():
+    print("🔍 Запрос на генерацию отчёта...")
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        success = loop.run_until_complete(send_report_async())
+    finally:
+        loop.close()
+
+    if success:
+        return jsonify({"status": "success", "message": "Отчёт успешно отправлен"}), 200
+    else:
+        return jsonify({"status": "error", "message": "Ошибка при отправке отчёта"}), 200
+
+# Gunicorn запустит flask_app, поэтому блок if __name__ == "__main__" не нужен
