@@ -1,9 +1,11 @@
 import asyncio
+import threading
 from datetime import datetime, timedelta
 from supabase import create_client
-from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram import Update
 import os
+from flask import Flask, request # <-- Добавляем Flask
 
 # === ЧТЕНИЕ ПЕРЕМЕННЫХ ИЗ ОКРУЖЕНИЯ (Render) ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -11,6 +13,7 @@ SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID"))  # ID приватног
 TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))   # ID публичного канала
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+PORT = int(os.getenv("PORT", 10000))  # Порт от Render или 10000 по умолчанию
 
 # === ИНИЦИАЛИЗАЦИЯ ===
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -22,7 +25,7 @@ def is_duplicate(url: str) -> bool:
         return len(response.data) > 0
     except Exception as e:
         print(f"❌ Ошибка при проверке дубликата: {e}")
-        return False # В случае ошибки - лучше принять, чем потерять
+        return False
 
 # Сохранить пост в базу (только если не дубль)
 def save_post(title, content, url, pub_date):
@@ -47,7 +50,6 @@ def save_post(title, content, url, pub_date):
 # Генерация отчёта (только посты за последние 24 часа, непроанализированные)
 def generate_daily_report():
     try:
-        # Получаем посты за последние 24 часа, которые ещё не проанализированы
         yesterday = datetime.utcnow() - timedelta(days=1)
         response = supabase.table("ingested_content_items") \
             .select("*") \
@@ -60,7 +62,6 @@ def generate_daily_report():
         if not posts:
             return "Нет новых данных за последние 24 часа."
 
-        # Формируем отчёт
         report = [
             f"📊 Аналитический отчёт (постов за 24ч: {len(posts)})",
             f"Сформирован: {datetime.utcnow().strftime('%d.%m.%Y %H:%M')} UTC",
@@ -74,13 +75,13 @@ def generate_daily_report():
             report.append(f"• {content} [{url}]")
 
         full_text = "\n".join(report)
-        return full_text[:2000]  # Ограничиваем до 2000 знаков
+        return full_text[:2000]
 
     except Exception as e:
         return f"❌ Ошибка генерации отчёта: {e}"
 
 # Отправка отчёта
-async def send_daily_report(app: Application):
+async def send_daily_report_async(app: Application):
     try:
         report = generate_daily_report()
         await app.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report)
@@ -100,15 +101,12 @@ async def send_daily_report(app: Application):
 # Обработка новых постов из Telegram
 async def handle_new_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
-    # Проверяем, что пост из нужного приватного канала
     if message.chat.id != SOURCE_CHANNEL_ID:
         return
 
     text = message.text or ""
-    # Создаём ссылку на пост
     url = message.link or f"https://t.me/c/{message.chat.id}/{message.message_id}"
 
-    # Сохраняем ТОЛЬКО если это не дубль
     save_post(
         title=text[:100],
         content=text,
@@ -116,20 +114,44 @@ async def handle_new_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pub_date=message.date
     )
 
-# Запуск бота
-def main():
+# === ФУНКЦИЯ ЗАПУСКА БОТА (работает в отдельном потоке) ===
+def run_bot():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    # Обработчик всех текстовых сообщений
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_new_post))
 
-    print(f"🚀 Бот запущен. Слушает приватный канал {SOURCE_CHANNEL_ID}...")
+    print(f"🚀 Бот запущен в фоне. Слушает канал {SOURCE_CHANNEL_ID}...")
 
-    # === ОТПРАВИТЬ ОДИН ТЕСТОВЫЙ ОТЧЁТ СРАЗУ ПОСЛЕ ЗАПУСКА ===
-    loop = asyncio.get_event_loop()
-    loop.create_task(send_daily_report(app))
+    # === ОТПРАВИТЬ ОДИН ТЕСТОВЫЙ ОТЧЁТ СРАЗУ ПОСЛЕ ЗАПУСКА БОТА ===
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(send_daily_report_async(app))
 
     app.run_polling()
+
+# === Flask веб-сервер ===
+flask_app = Flask(__name__)
+
+@flask_app.route('/') # Корневой маршрут
+def home():
+    return "Telegram Bot is running!", 200
+
+# Добавим маршрут для проверки состояния, если нужно
+@flask_app.route('/health')
+def health():
+    return {'status': 'ok'}, 200
+
+# === ОСНОВНОЙ ЗАПУСК ===
+def main():
+    # Запускаем бота в отдельном потоке
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.daemon = True  # Поток завершится, если основной процесс завершится
+    bot_thread.start()
+
+    print(f"🌍 Flask сервер запущен на порту {PORT}. Ожидание HTTP-запросов...")
+
+    # Запускаем Flask веб-сервер на PORT, который указал Render
+    # debug=False важно для production
+    flask_app.run(host='0.0.0.0', port=PORT, debug=False)
 
 if __name__ == "__main__":
     main()
