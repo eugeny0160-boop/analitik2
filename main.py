@@ -1,6 +1,5 @@
 import asyncio
 import threading
-import re
 from datetime import datetime, timedelta
 from supabase import create_client
 from telegram.ext import Application, MessageHandler, filters
@@ -10,8 +9,8 @@ from flask import Flask, jsonify
 
 # === Настройки ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID"))
-TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))
+SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID")) # ID приватного канала
+TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID")) # ID публичного канала
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PORT = int(os.getenv("PORT", 10000))
@@ -41,69 +40,51 @@ def save_post(title, content, url, pub_date):
     except Exception as e:
         print(f"❌ Ошибка сохранения: {e}")
 
-# === НОВАЯ ФУНКЦИЯ: Генерация структурированной аналитической записки ===
 def generate_report():
     yesterday = datetime.utcnow() - timedelta(days=1)
     try:
+        # Получаем все непроанализированные посты за последние 24 часа
         resp = supabase.table("ingested_content_items") \
             .select("*") \
             .gte("pub_date", yesterday.isoformat()) \
             .eq("is_analyzed", False) \
             .order("pub_date", desc=True) \
             .execute()
+
         posts = resp.data
         if not posts:
             return "Нет новых данных за последние 24 часа."
 
-        # --- Группировка по категориям (упрощённая) ---
-        categories = {
-            " geopolitic ": [],
-            " economy ": [],
-            " security ": [],
-            " energy ": [],
-            " tech ": [],
-            " other ": []
-        }
+        # Группируем по source_url (по источнику)
+        sources = {}
+        for post in posts:
+            url = post["source_url"]
+            if url not in sources:
+                sources[url] = []
+            sources[url].append(post["content"] or "Без текста")
 
-        for p in posts:
-            content_lower = p['content'].lower() if p['content'] else ""
-            url = p['source_url']
-            # Извлекаем первые 100 символов как "заголовок"
-            snippet = (p['content'] or "Нет текста")[:100] + ("..." if len(p['content'] or "") > 100 else "")
-            
-            # Классификация по ключевым словам
-            if any(k in content_lower for k in ["диплом", "международ", "переговор", "встреч", "власть", "полит", "власть"]):
-                categories[" geopolitic "].append(f"• {snippet} [{url}]")
-            elif any(k in content_lower for k in ["эконом", "цен", "торговл", "бирж", "валют", "инфляц", "бюджет", "финанс"]):
-                categories[" economy "].append(f"• {snippet} [{url}]")
-            elif any(k in content_lower for k in ["войн", "армия", "безопасн", "террор", "развед", "погранич"]):
-                categories[" security "].append(f"• {snippet} [{url}]")
-            elif any(k in content_lower for k in ["нефть", "газ", "энерг", "ресурс", "электро", "уголь"]):
-                categories[" energy "].append(f"• {snippet} [{url}]")
-            elif any(k in content_lower for k in ["технолог", "искусствен", "спутник", "кибер", "инновац"]):
-                categories[" tech "].append(f"• {snippet} [{url}]")
-            else:
-                categories[" other "].append(f"• {snippet} [{url}]")
-
-        # --- Формирование отчёта ---
+        # Формируем отчёт
         report_lines = [
-            f"📊 <b>Аналитическая записка за {yesterday.strftime('%d.%m.%Y')}</b>",
-            f"Сформировано: {datetime.utcnow().strftime('%d.%m.%Y %H:%M')} UTC",
-            "",
-            "<b>1. Исполнительное резюме</b>",
-            f"За последние 24 часа зафиксировано {len(posts)} событий, касающихся международной обстановки и России. Ниже представлена структурированная сводка.",
-            "",
+            f"1. Исполнительное резюме",
+            f"За отчётный период проанализировано {len(sources)} источников.",
+            f"Основные события касаются геополитической и экономической динамики в регионе.",
+            f"",
+            f"2. Обзор по источникам",
         ]
 
-        # Добавляем категории с постами
-        for category, items in categories.items():
-            if items: # Только если есть посты в категории
-                report_lines.append(f"<b>{category.upper()}</b>")
-                report_lines.extend(items)
-                report_lines.append("") # Пустая строка между категориями
+        for url, contents in sources.items():
+            report_lines.append(f"• Источник: {url}")
+            for content in contents[:1]:  # Берём только первый пост от источника
+                clean_content = (content[:290] + "...") if len(content) > 290 else content
+                report_lines.append(f"  – {clean_content}")
+
+        report_lines.append("")
+        report_lines.append("3. Вывод")
+        report_lines.append("Ситуация остаётся динамичной. Требуется мониторинг ключевых событий.")
+        report_lines.append(f"Отчёт сформирован: {datetime.utcnow().strftime('%d.%m.%Y %H:%M')} UTC")
 
         full_text = "\n".join(report_lines)
-        return full_text[:4000] # Ограничиваем до 4000 знаков для Telegram
+        return full_text[:2000]
 
     except Exception as e:
         return f"❌ Ошибка генерации отчёта: {e}"
@@ -113,8 +94,8 @@ async def send_report_async():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     try:
         report = generate_report()
-        await app.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report, parse_mode="HTML")
-        print("✅ Аналитическая записка отправлена")
+        await app.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report)
+        print("✅ Отчёт отправлен")
 
         # Отмечаем как проанализированные
         supabase.table("ingested_content_items") \
@@ -144,9 +125,11 @@ flask_app = Flask(__name__)
 def home():
     return "Bot is alive", 200
 
+# Новый маршрут для запуска отчёта через cron-job.org
 @flask_app.route("/trigger-report")
 def trigger_report():
     print("🔍 Получен запрос на генерацию отчёта от cron-job.org")
+    # Создаём новый event loop для выполнения асинхронной функции
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     success = loop.run_until_complete(send_report_async())
