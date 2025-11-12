@@ -21,11 +21,14 @@ def is_duplicate(url):
     try:
         resp = supabase.table("ingested_content_items").select("id").eq("source_url", url).execute()
         return len(resp.data) > 0
-    except:
-        return False
+    except Exception as e:
+        print(f"❌ Ошибка проверки дубликата: {e}")
+        return False # В случае ошибки - лучше сохранить, чем потерять
 
 def save_post(title, content, url, pub_date):
-    if is_duplicate(url): return
+    if is_duplicate(url):
+        print(f"⚠️ Пропущен дубль: {url}")
+        return
     try:
         supabase.table("ingested_content_items").insert({
             "source_url": url,
@@ -38,7 +41,7 @@ def save_post(title, content, url, pub_date):
         }).execute()
         print(f"📥 Сохранён пост: {url}")
     except Exception as e:
-        print(f"❌ Ошибка сохранения: {e}")
+        print(f"❌ Ошибка сохранения {url}: {e}")
 
 def generate_report():
     yesterday = datetime.utcnow() - timedelta(days=1)
@@ -112,7 +115,7 @@ async def send_report_async():
 # === Flask для порта и Webhook ===
 flask_app = Flask(__name__)
 
-@flask_app.route("/") 
+@flask_app.route("/")
 def home():
     return "Bot is alive", 200
 
@@ -120,20 +123,36 @@ def home():
 @flask_app.route(f'/{os.getenv("TELEGRAM_TOKEN")}', methods=['POST'])
 def webhook():
     try:
+        print("🔍 Получен запрос от Telegram на webhook.")
         # Получаем JSON-данные из запроса
         update_json = request.get_json()
+        if not update_json:
+            print("⚠️ Запрос не содержит JSON.")
+            return jsonify({"error": "Empty JSON"}), 400
+
+        print(f"📨 Получено обновление: {update_json}") # Логируем обновление
+
         update = Update.de_json(update_json)
 
         # Обрабатываем пост, если он из нужного канала
-        if update.channel_post and update.channel_post.chat.id == SOURCE_CHANNEL_ID:
-            post = update.channel_post
-            url = post.link or f"https://t.me/c/{post.chat.id}/{post.message_id}"
-            save_post(post.text[:100], post.text, url, post.date)
+        if update.channel_post:
+            print(f"💬 Найден channel_post от чата {update.channel_post.chat.id}")
+            if update.channel_post.chat.id == SOURCE_CHANNEL_ID:
+                print("✅ Пост из нужного канала.")
+                post = update.channel_post
+                url = post.link or f"https://t.me/c/{post.chat.id}/{post.message_id}"
+                save_post(post.text[:100], post.text, url, post.date)
+            else:
+                print(f"❌ Пост из другого канала: {update.channel_post.chat.id}")
+        else:
+            print("💬 Обновление не содержит channel_post.")
 
         # Всегда возвращаем 200 OK
         return jsonify({"status": "ok"}), 200
     except Exception as e:
         print(f"❌ Ошибка обработки webhook: {e}")
+        import traceback
+        traceback.print_exc() # Печатаем полный стек вызова для отладки
         return jsonify({"error": str(e)}), 500
 
 # Маршрут для запуска отчёта вручную
@@ -147,7 +166,7 @@ def trigger_report():
         success = loop.run_until_complete(send_report_async())
     finally:
         loop.close() # Закрываем loop после выполнения задачи
-    
+
     if success:
         return jsonify({"status": "success", "message": "Отчёт успешно отправлен"}), 200
     else:
