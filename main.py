@@ -9,7 +9,7 @@ from flask import Flask, jsonify
 
 # === Настройки ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID")) # ID приватного канала
+SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID")) # ID вашего НОВОГО приватного канала
 TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID")) # ID публичного канала
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
