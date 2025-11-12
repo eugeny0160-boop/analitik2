@@ -90,7 +90,9 @@ def generate_report():
         return f"❌ Ошибка генерации отчёта: {e}"
 
 # Отдельная асинхронная функция для отправки отчёта
-async def send_report_async(app): # Передаём объект app
+async def send_report_async():
+    # Создаём временное приложение для отправки отчёта
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
     try:
         report = generate_report()
         await app.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report)
@@ -117,7 +119,28 @@ async def handle_channel_post(update: Update, context):
     url = post.link or f"https://t.me/c/{post.chat.id}/{post.message_id}"
     save_post(post.text[:100], post.text, url, post.date)
 
-# === Flask для порта ===
+# Функция для запуска Telegram-бота в отдельном потоке
+def run_telegram_bot():
+    print("📡 Запуск Telegram polling в отдельном потоке...")
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_channel_post))
+
+    # Отправляем отчёт при запуске бота (в потоке бота)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    print("🔧 Отправляем отчёт при запуске бота...")
+    loop.run_until_complete(send_report_async())
+
+    # Запускаем polling в этом же потоке
+    # ВАЖНО: Это может вызвать ту же ошибку, если loop не подходит
+    try:
+        app.run_polling()
+    except RuntimeError as e:
+        print(f"❌ Ошибка при запуске polling в потоке: {e}")
+        # Если ошибка всё равно возникает, возможно, это фатально для Web Service
+        raise e
+
+# === Flask для порта (работает в основном потоке) ===
 flask_app = Flask(__name__)
 
 @flask_app.route("/") 
@@ -128,70 +151,32 @@ def home():
 @flask_app.route("/trigger-report")
 def trigger_report():
     print("🔍 Получен запрос на генерацию отчёта от cron-job.org")
-    # Для этого маршрута мы НЕ создаём новый loop
-    # Мы получаем текущий loop, в который добавим задачу
+    # Создаём новый event loop для выполнения асинхронной функции
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        loop = asyncio.get_event_loop()
-        # Создаём задачу для выполнения в текущем loop
-        task = send_report_async_from_flask()
-        # Запускаем задачу и ждём результата
-        success = loop.run_until_complete(task)
-    except RuntimeError:
-        # Если loop не запущен (например, вне асинхронного контекста Flask)
-        # Создаём новый loop на время выполнения
-        new_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(new_loop)
-        try:
-            task = send_report_async_from_flask()
-            success = new_loop.run_until_complete(task)
-        finally:
-            new_loop.close()
+        success = loop.run_until_complete(send_report_async())
+    finally:
+        loop.close() # Закрываем loop после выполнения задачи
     
     if success:
         return jsonify({"status": "success", "message": "Отчёт успешно отправлен"}), 200
     else:
         return jsonify({"status": "error", "message": "Ошибка при отправке отчёта"}), 500
 
-# Отдельная функция для вызова из Flask
-async def send_report_async_from_flask():
-    # Создаём временное приложение для отправки отчёта
-    temp_app = Application.builder().token(TELEGRAM_TOKEN).build()
-    return await send_report_async(temp_app)
-
 def run_flask():
     flask_app.run(host="0.0.0.0", port=PORT, debug=False)
 
 # === Запуск ===
 def main():
-    # Запускаем Flask в фоне
-    thread = threading.Thread(target=run_flask)
-    thread.daemon = True
-    thread.start()
+    # Запускаем Telegram-бота в отдельном потоке
+    # daemon=True означает, что поток завершится, если основной процесс завершится
+    bot_thread = threading.Thread(target=run_telegram_bot, daemon=True)
+    bot_thread.start()
 
-    # Создаём основное приложение бота
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_channel_post))
-    
-    print("🚀 Бот запущен...")
-
-    # --- ОТПРАВИТЬ ОТЧЁТ ПРИ ЗАПУСКЕ ---
-    # Получаем текущий loop или создаём новый
-    try:
-        loop = asyncio.get_running_loop()
-        # Если loop уже запущен, добавляем задачу
-        print("⚠️ Loop уже запущен, планируем задачу...")
-        asyncio.create_task(send_report_async(app))
-    except RuntimeError:
-        # Loop не запущен, создаём и запускаем
-        print("🔧 Создаём новый loop для отправки отчёта...")
-        new_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(new_loop)
-        new_loop.run_until_complete(send_report_async(app))
-        new_loop.close() # Можно закрыть, так как он был создан только для этого
-
-    # --- ЗАПУСТИТЬ БОТА ---
-    print("📡 Запуск Telegram polling...")
-    app.run_polling()
+    # Запускаем Flask в основном потоке
+    print("🌍 Flask сервер запущен на порту", PORT)
+    run_flask() # Это блокирует основной поток
 
 if __name__ == "__main__":
     main()
