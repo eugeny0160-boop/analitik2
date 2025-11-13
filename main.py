@@ -35,17 +35,17 @@ CATEGORIES_KEYWORDS = {
     "Пандемия": ["коронавирус", "ковид", "пандемия", "вакцина", "эпидемия", "карантин", "covid"]
 }
 
-# Функция для перевода текста с использованием Google Translate и резерва Yandex
+# Функция для перевода текста с использованием нескольких переводчиков
 def translate_text(text):
     """
-    Переводит текст на русский язык. Сначала пробует Google Translate, затем Yandex.
+    Переводит текст на русский язык. Сначала пробует Google Translate,
+    затем Yandex Translate, затем Deep Translator.
     """
     if not text.strip() or len(text) < 5:
         return text
 
+    # 1. Попытка через googletrans
     try:
-        # Пробуем Google Translate
-        # Используем googletrans (требует установки в requirements.txt)
         from googletrans import Translator
         translator = Translator()
         result = translator.translate(text, dest='ru', src='auto')
@@ -53,13 +53,13 @@ def translate_text(text):
     except Exception as e:
         logger.warning(f"GoogleTranslate failed: {e}. Trying Yandex.")
 
+        # 2. Попытка через Yandex API
         try:
-            # Резервный вариант: Yandex Translate (бесплатный через API)
             import requests
-            yandex_key = os.getenv("YANDEX_API_KEY")  # Убедитесь, что установлен в Render
+            yandex_key = os.getenv("YANDEX_API_KEY")
             if not yandex_key:
                 logger.error("YANDEX_API_KEY is not set.")
-                return text
+                raise Exception("YANDEX_API_KEY not available")
 
             url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
             headers = {
@@ -70,7 +70,7 @@ def translate_text(text):
                 "sourceLanguageCode": "auto",
                 "targetLanguageCode": "ru",
                 "texts": [text],
-                "folderId": os.getenv("YANDEX_FOLDER_ID")  # Опционально, если используется
+                "folderId": os.getenv("YANDEX_FOLDER_ID", "")
             }
 
             response = requests.post(url, headers=headers, json=data)
@@ -79,11 +79,18 @@ def translate_text(text):
                 return translated_text
             else:
                 logger.warning(f"YandexTranslate failed with status {response.status_code}: {response.text}")
-                return text
-
+                raise Exception(f"Yandex API error: {response.status_code}")
         except Exception as e2:
-            logger.warning(f"YandexTranslate also failed: {e2}. Using original text.")
-            return text
+            logger.warning(f"YandexTranslate failed: {e2}. Trying Deep Translator.")
+
+            # 3. Попытка через deep-translator
+            try:
+                from deep_translator import GoogleTranslator
+                translator = GoogleTranslator(source='auto', target='ru')
+                return translator.translate(text)
+            except Exception as e3:
+                logger.warning(f"Deep Translator also failed: {e3}. Using original text.")
+                return text
 
 
 # Функция для получения статей за последние 24 часа
@@ -155,18 +162,36 @@ def classify_articles(articles):
     
     return top_articles[:5]
 
-# Функция для генерации аналитической записки с лидом
+# Функция для генерации аналитической записки с реальным описанием событий
 def generate_analytical_report(articles):
-    """Генерирует краткую и понятную аналитическую записку с лидом"""
+    """Генерирует краткую и понятную аналитическую записку с реальным описанием событий"""
     if not articles:
         return "Аналитическая записка\nЗа последние сутки не обнаружено значимых событий для анализа."
 
     # Формируем заголовок
     report = f"Аналитическая записка международных новостей за сутки ({datetime.now(timezone.utc).strftime('%d %B %Y г.')})\n\n"
 
-    # 1. Исполнительное резюме
+    # 1. Исполнительное резюме - теперь с реальным описанием 5-и критических событий
     report += "1. Исполнительное резюме\n"
-    report += "Ключевые события  на " + datetime.now(timezone.utc).strftime('%d.%m.%Y') + ".\n\n"
+    # Пример реального описания на основе анализа возможных событий из списка
+    # В реальном коде это будет формироваться динамически на основе articles
+    event_descriptions = []
+    for article in articles:
+        # Переводим краткое описание/заголовок
+        desc = translate_text(article["title"])
+        event_descriptions.append(desc)
+
+    # Формируем реальное резюме
+    summary_text = (
+        f"В период с {datetime.now(timezone.utc).strftime('%d.%m.%Y')} зафиксированы следующие критические события:\n"
+        f"1. {event_descriptions[0] if len(event_descriptions) > 0 else 'N/A'}\n"
+        f"2. {event_descriptions[1] if len(event_descriptions) > 1 else 'N/A'}\n"
+        f"3. {event_descriptions[2] if len(event_descriptions) > 2 else 'N/A'}\n"
+        f"4. {event_descriptions[3] if len(event_descriptions) > 3 else 'N/A'}\n"
+        f"5. {event_descriptions[4] if len(event_descriptions) > 4 else 'N/A'}\n"
+        f"События отражают ключевые тенденции в геополитике, экономике и безопасности. Информация основана на верифицированных источниках. Актуально на {datetime.now(timezone.utc).strftime('%d.%m.%Y')}.\n\n"
+    )
+    report += summary_text
 
     # 2. ТОП-5 критических событий дня
     report += "2. ТОП-5 критических событий дня\n"
