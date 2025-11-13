@@ -35,24 +35,71 @@ CATEGORIES_KEYWORDS = {
     "Пандемия": ["коронавирус", "ковид", "пандемия", "вакцина", "эпидемия", "карантин", "covid"]
 }
 
-# === ПРОСТОЙ СЛОВАРЬ ПЕРЕВОДА — РАБОТАЕТ 100% ===
-TRANSLATE_MAP = {
-    "Scotland Plans to Sell Its First Ever Government Bonds": "Шотландия планирует выпустить первые государственные облигации",
-    "Cocaine Bonanza and a Defiant Colombian President Infuriate Trump": "Колумбийский президент вызвал гнев Трампа из-за наркотрафика",
-    "Germany Won’t Make Military Service Mandatory (Unless It Has To)": "Германия отказалась от обязательной военной службы (пока)",
-    "From rare earths to antimony: A strategic approach to critical mineral supply": "Китай ограничил экспорт антипирина — ключевого минерала для полупроводников",
-    "Zelenskiy Vows Justice in Ukraine Corruption Probe Tied to Ex-Partner": "Зеленский обещал разобраться с коррупцией в связи с бывшим бизнес-партнёром",
-    "Moses parts the Red Sea: Israel’s strategic challenges as new routes emerge": "Мост «Моисей» ставит под угрозу транзитную роль Израиля",
-    "Minsk in Moscow’s grip: How Russia subjugated Belarus without annexation": "Минск в объятиях Москвы: как Россия подчинила Беларусь без аннексии",
-    "Lina Khan Wants to Amplify Mamdani’s Power With Little-Used Laws": "Лина Хан хочет усилить полномочия Мамдани с помощью малоиспользуемых законов",
-    "Ex-MI6 Chief Says Chinese Should ‘Get Their Embassy’ in London": "Бывший глава MI6 сказал, что Китаю следует «получить посольство» в Лондоне",
-    "China’s climate pledge breaks new ground": "Китай сделал прорывное климатическое обязательство",
-    "A New Path to Middle East Security": "Новый путь к безопасности на Ближнем Востоке"
-}
+# === БЕСПЛАТНЫЕ ПЕРЕВОДЧИКИ ===
+# 1. Google Translate через библиотеку googletrans
+# 2. Yandex Translate через API (требует YANDEX_API_KEY)
+# 3. Deep Translator (Google, Yandex, Bing и др.)
 
-def translate_text(text):
-    """Простой перевод — только по словарю. Никаких API, никаких ошибок."""
-    return TRANSLATE_MAP.get(text, text)  # Если нет перевода — оставляем как есть
+def translate_text_free(text):
+    """
+    Переводит текст на русский язык, используя бесплатные переводчики.
+    Порядок: googletrans -> Yandex API -> Deep Translator (Google).
+    """
+    if not text.strip() or len(text) < 5:
+        return text
+
+    # 1. Попытка через googletrans
+    try:
+        from googletrans import Translator
+        translator = Translator()
+        result = translator.translate(text, dest='ru', src='auto')
+        logger.info(f"✅ Переведено через Google Translate: {text[:50]}...")
+        return result.text
+    except Exception as e:
+        logger.warning(f"❌ GoogleTranslate (googletrans) не сработал: {e}. Пробуем Yandex API...")
+
+    # 2. Попытка через Yandex API (требует YANDEX_API_KEY)
+    try:
+        yandex_key = os.getenv("YANDEX_API_KEY")
+        if not yandex_key:
+            raise Exception("YANDEX_API_KEY не установлен в переменных окружения Render.")
+
+        import requests
+        url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Api-Key {yandex_key}",
+        }
+        data = {
+            "sourceLanguageCode": "auto",
+            "targetLanguageCode": "ru",
+            "texts": [text],
+            "folderId": os.getenv("YANDEX_FOLDER_ID", "")  # Опционально
+        }
+
+        response = requests.post(url, headers=headers, json=data)
+        if response.status_code == 200:
+            translated_text = response.json()["translations"][0]["text"]
+            logger.info(f"✅ Переведено через Yandex API: {text[:50]}...")
+            return translated_text
+        else:
+            logger.warning(f"❌ Yandex API вернул ошибку {response.status_code}: {response.text}")
+            raise Exception(f"Yandex API error: {response.status_code}")
+
+    except Exception as e2:
+        logger.warning(f"❌ Yandex API не сработал: {e2}. Пробуем Deep Translator...")
+
+    # 3. Попытка через Deep Translator
+    try:
+        from deep_translator import GoogleTranslator
+        translator = GoogleTranslator(source='auto', target='ru')
+        translated_text = translator.translate(text)
+        logger.info(f"✅ Переведено через Deep Translator (Google): {text[:50]}...")
+        return translated_text
+    except Exception as e3:
+        logger.error(f"❌ Все переводчики не сработали. Используем оригинальный текст: {e3}")
+        return text # Возврат оригинала в случае полной неудачи
+
 
 # Функция для получения статей за последние 24 часа
 def get_recent_articles():
@@ -67,7 +114,7 @@ def get_recent_articles():
             .execute()
         return response.data
     except Exception as e:
-        logger.error(f"Ошибка получения статей: {e}")
+        logger.error(f"❌ Ошибка получения статей: {e}")
         return []
 
 # Функция для проверки дубликатов
@@ -81,7 +128,7 @@ def is_duplicate_report(content):
             .execute()
         return len(response.data) > 0
     except Exception as e:
-        logger.error(f"Ошибка проверки дубликатов: {e}")
+        logger.error(f"❌ Ошибка проверки дубликатов: {e}")
         return False
 
 # Функция для классификации статей
@@ -111,7 +158,6 @@ def classify_articles(articles):
             if len(all_articles) >= 5:
                 break
     
-    # Если мало — дополняем свежими
     if len(all_articles) < 5:
         remaining = [a for a in articles if a not in all_articles]
         remaining.sort(key=lambda x: x["created_at"], reverse=True)
@@ -119,7 +165,7 @@ def classify_articles(articles):
     
     return all_articles[:5]
 
-# Генерация аналитической записки — ПРОСТО, ПОНЯТНО, ПО ФОРМАТУ
+# Генерация аналитической записки
 def generate_analytical_report(articles):
     if not articles:
         return "Аналитическая записка\nЗа последние сутки не обнаружено значимых событий для анализа."
@@ -130,16 +176,18 @@ def generate_analytical_report(articles):
     # 1. Исполнительное резюме — на основе 5 событий
     report += "1. Исполнительное резюме\n"
     for i, article in enumerate(articles[:5], 1):
-        translated_title = translate_text(article["title"])
+        # Переводим заголовок
+        translated_title = translate_text_free(article["title"])
         report += f"{i}. {translated_title}\n"
     report += "События отражают ключевые тенденции в геополитике, экономике и безопасности. Информация основана на верифицированных источниках. Актуально на " + datetime.now(timezone.utc).strftime('%d.%m.%Y') + ".\n\n"
 
     # 2. ТОП-5 событий — заголовок + лид + источник
     report += "2. ТОП-5 критических событий дня\n"
     for i, article in enumerate(articles[:5], 1):
-        translated_title = translate_text(article["title"])
+        # Переводим заголовок
+        translated_title = translate_text_free(article["title"])
         
-        # Лид — первые 150 символов текста (не заголовка!)
+        # Генерируем лид: первые 1–2 предложения или до 150 символов
         content = article["title"]
         sentences = re.split(r'[.!?]+', content)
         lead = sentences[0].strip()
@@ -148,7 +196,7 @@ def generate_analytical_report(articles):
         lead = lead[:150] + "..." if len(lead) > 150 else lead
         
         # Переводим лид
-        translated_lead = translate_text(lead)
+        translated_lead = translate_text_free(lead)
         
         # Формируем пункт
         report += f"Событие №{i}: {translated_title}\n"
@@ -173,7 +221,7 @@ def save_report_to_db(report_content, source_count, article_ids):
         response = supabase.table("analytical_reports").insert(data).execute()
         return response.data[0]["id"] if response.data else None
     except Exception as e:
-        logger.error(f"Ошибка сохранения отчёта: {e}")
+        logger.error(f"❌ Ошибка сохранения отчёта: {e}")
         return None
 
 # Отправка в Telegram
@@ -183,7 +231,7 @@ async def send_report_to_telegram(report):
         await app.bot.send_message(chat_id=TARGET_CHANNEL_ID, text=report)
         return True
     except Exception as e:
-        logger.error(f"Ошибка отправки в Telegram: {e}")
+        logger.error(f"❌ Ошибка отправки в Telegram: {e}")
         return False
 
 # Главный эндпоинт
