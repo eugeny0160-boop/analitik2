@@ -41,7 +41,7 @@ def generate_analytical_summary(articles):
     # 1. Исполнительное резюме (10%)
     summary_lines = [
         f"1. Исполнительное резюме",
-        f"За последние 24 часа проанализировано {len(articles)} новостных источников. Ключевые темы: {', '.join(set(cat for art in articles for cat in categorize_article(art['title'] + ' ' + art['content']))}. Все утверждения подтверждены источниками.",
+        f"За последние 24 часа проанализировано {len(articles)} новостных источников. Ключевые темы: {', '.join(set(cat for art in articles for cat in categorize_article(art['title'] + ' ' + art['content'])))}. Все утверждения подтверждены источниками.",
         ""
     ]
 
