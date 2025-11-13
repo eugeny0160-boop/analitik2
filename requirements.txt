@@ -2,3 +2,4 @@ python-telegram-bot
 supabase
 Flask
 gunicorn
+python-dotenv
