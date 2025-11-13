@@ -7,7 +7,7 @@ from telegram.ext import Application
 from flask import Flask, jsonify, request
 import logging
 from collections import defaultdict
-
+from deep_translator import GoogleTranslator, YandexTranslator
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -44,44 +44,24 @@ def translate_text(text):
     if not text.strip() or len(text) < 5:
         return text
 
-    # 1. Попытка через googletrans
+    """Надежный перевод с резервным переводчиком"""
+    if not text.strip() or len(text) < 5:
+        return text
+    
     try:
-        from googletrans import Translator
-        translator = Translator()
-        result = translator.translate(text, dest='ru', src='auto')
-        return result.text
+        # Пробуем Google Translate
+        translator = GoogleTranslator(source='auto', target='ru')
+        return translator.translate(text)
     except Exception as e:
         logger.warning(f"GoogleTranslate failed: {e}. Trying Yandex.")
-
-        # 2. Попытка через Yandex API
         try:
-            import requests
-            yandex_key = os.getenv("YANDEX_API_KEY")
-            if not yandex_key:
-                logger.error("YANDEX_API_KEY is not set.")
-                raise Exception("YANDEX_API_KEY not available")
-
-            url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Api-Key {yandex_key}",
-            }
-            data = {
-                "sourceLanguageCode": "auto",
-                "targetLanguageCode": "ru",
-                "texts": [text],
-                "folderId": os.getenv("YANDEX_FOLDER_ID", "")
-            }
-
-            response = requests.post(url, headers=headers, json=data)
-            if response.status_code == 200:
-                translated_text = response.json()["translations"][0]["text"]
-                return translated_text
-            else:
-                logger.warning(f"YandexTranslate failed with status {response.status_code}: {response.text}")
-                raise Exception(f"Yandex API error: {response.status_code}")
+            # Резервный вариант: Yandex Translate (бесплатный)
+            translator = YandexTranslator(source='auto', target='ru')
+            return translator.translate(text)
         except Exception as e2:
-            logger.warning(f"YandexTranslate failed: {e2}. Trying Deep Translator.")
+            logger.warning(f"YandexTranslate also failed: {e2}. Using original text.")
+            return text
+
 
             # 3. Попытка через deep-translator
             try:
