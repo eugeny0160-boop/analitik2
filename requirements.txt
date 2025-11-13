@@ -3,3 +3,7 @@ supabase
 Flask
 gunicorn
 python-dotenv
+# Бесплатные переводчики
+googletrans
+requests
+deep-translator
