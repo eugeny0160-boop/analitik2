@@ -35,21 +35,56 @@ CATEGORIES_KEYWORDS = {
     "Пандемия": ["коронавирус", "ковид", "пандемия", "вакцина", "эпидемия", "карантин", "covid"]
 }
 
-# Словарь для перевода заголовков на русский
-TRANSLATION_DICT = {
-    "Scotland Plans to Sell Its First Ever Government Bonds": "Шотландия планирует выпустить первые государственные облигации",
-    "Cocaine Bonanza and a Defiant Colombian President Infuriate Trump": "Колумбийский президент вызвал гнев Трампа из-за наркотрафика",
-    "Germany Won’t Make Military Service Mandatory (Unless It Has To)": "Германия отказалась от обязательной военной службы (пока)",
-    "From rare earths to antimony: A strategic approach to critical mineral supply": "Китай ограничил экспорт антипирина — ключевого минерала для полупроводников",
-    "Zelenskiy Vows Justice in Ukraine Corruption Probe Tied to Ex-Partner": "Зеленский обещал разобраться с коррупцией в связи с бывшим бизнес-партнёром",
-    "A New Path to Middle East Security": "Новый путь к безопасности на Ближнем Востоке"
-}
-
+# Функция для перевода текста с использованием Google Translate и резерва Yandex
 def translate_text(text):
-    """Простой перевод на основе словаря"""
-    for eng, rus in TRANSLATION_DICT.items():
-        text = text.replace(eng, rus)
-    return text
+    """
+    Переводит текст на русский язык. Сначала пробует Google Translate, затем Yandex.
+    """
+    if not text.strip() or len(text) < 5:
+        return text
+
+    try:
+        # Пробуем Google Translate
+        # Используем googletrans (требует установки в requirements.txt)
+        from googletrans import Translator
+        translator = Translator()
+        result = translator.translate(text, dest='ru', src='auto')
+        return result.text
+    except Exception as e:
+        logger.warning(f"GoogleTranslate failed: {e}. Trying Yandex.")
+
+        try:
+            # Резервный вариант: Yandex Translate (бесплатный через API)
+            import requests
+            yandex_key = os.getenv("YANDEX_API_KEY")  # Убедитесь, что установлен в Render
+            if not yandex_key:
+                logger.error("YANDEX_API_KEY is not set.")
+                return text
+
+            url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Api-Key {yandex_key}",
+            }
+            data = {
+                "sourceLanguageCode": "auto",
+                "targetLanguageCode": "ru",
+                "texts": [text],
+                "folderId": os.getenv("YANDEX_FOLDER_ID")  # Опционально, если используется
+            }
+
+            response = requests.post(url, headers=headers, json=data)
+            if response.status_code == 200:
+                translated_text = response.json()["translations"][0]["text"]
+                return translated_text
+            else:
+                logger.warning(f"YandexTranslate failed with status {response.status_code}: {response.text}")
+                return text
+
+        except Exception as e2:
+            logger.warning(f"YandexTranslate also failed: {e2}. Using original text.")
+            return text
+
 
 # Функция для получения статей за последние 24 часа
 def get_recent_articles():
@@ -131,7 +166,7 @@ def generate_analytical_report(articles):
 
     # 1. Исполнительное резюме
     report += "1. Исполнительное резюме\n"
-    report += "За последние сутки ключевые события сосредоточились на усилении геополитической напряжённости в Европе, Азии и на Ближнем Востоке. Наиболее значимые изменения связаны с экономическими санкциями, энергетическими потоками и дипломатическими сдвигами. Все события проанализированы на основе верифицированных публикаций. Информация актуальна на " + datetime.now(timezone.utc).strftime('%d.%m.%Y') + ".\n\n"
+    report += "Ключевые события  на " + datetime.now(timezone.utc).strftime('%d.%m.%Y') + ".\n\n"
 
     # 2. ТОП-5 критических событий дня
     report += "2. ТОП-5 критических событий дня\n"
@@ -147,7 +182,7 @@ def generate_analytical_report(articles):
             lead = lead + ". " + sentences[1].strip()
         lead = lead[:150] + "..." if len(lead) > 150 else lead
 
-        # Переводим лид (если нужно)
+        # Переводим лид
         translated_lead = translate_text(lead)
         
         # Добавляем событие в отчет: Заголовок + Лид + Источник
