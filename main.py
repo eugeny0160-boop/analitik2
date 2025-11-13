@@ -35,7 +35,7 @@ CATEGORIES_KEYWORDS = {
     "Пандемия": ["коронавирус", "ковид", "пандемия", "вакцина", "эпидемия", "карантин", "covid"]
 }
 
-# Простой словарь для перевода заголовков и ключевых фраз
+# Словарь для перевода заголовков на русский
 TRANSLATION_DICT = {
     "Scotland Plans to Sell Its First Ever Government Bonds": "Шотландия планирует выпустить первые государственные облигации",
     "Cocaine Bonanza and a Defiant Colombian President Infuriate Trump": "Колумбийский президент вызвал гнев Трампа из-за наркотрафика",
@@ -120,9 +120,9 @@ def classify_articles(articles):
     
     return top_articles[:5]
 
-# Функция для генерации аналитической записки
+# Функция для генерации аналитической записки с лидом
 def generate_analytical_report(articles):
-    """Генерирует краткую и понятную аналитическую записку"""
+    """Генерирует краткую и понятную аналитическую записку с лидом"""
     if not articles:
         return "Аналитическая записка\nЗа последние сутки не обнаружено значимых событий для анализа."
 
@@ -138,17 +138,21 @@ def generate_analytical_report(articles):
     for i, article in enumerate(articles, 1):
         # Переводим заголовок
         translated_title = translate_text(article["title"])
-        # Краткий лид (первые 200 символов или до точки)
-        content = translated_title
+        
+        # Генерируем лид: первые 1–2 предложения или до 150 символов
+        content = article["title"]
         sentences = re.split(r'[.!?]+', content)
         lead = sentences[0].strip()
-        if len(lead) < 100 and len(sentences) > 1:
+        if len(sentences) > 1 and len(lead) < 100:
             lead = lead + ". " + sentences[1].strip()
-        lead = lead[:200] + "..." if len(lead) > 200 else lead
+        lead = lead[:150] + "..." if len(lead) > 150 else lead
 
-        # Добавляем событие в отчет
+        # Переводим лид (если нужно)
+        translated_lead = translate_text(lead)
+        
+        # Добавляем событие в отчет: Заголовок + Лид + Источник
         report += f"Событие №{i}: {translated_title}\n"
-        report += f"Описание: {lead}\n"
+        report += f"{translated_lead}\n"
         report += f"Источник: {article['url']}\n\n"
 
     # Ограничиваем объем до 2000 знаков
