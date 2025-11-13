@@ -19,6 +19,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Простой словарь для перевода ключевых фраз
+TRANSLATION_DICT = {
+    "Executive Summary": "Исполнительное резюме",
+    "Critical Events of the Period": "Критические события периода",
+    "Detailed Thematic Analysis": "Детальный тематический анализ",
+    "In-depth Analysis of Impact on Russia": "Углубленный анализ влияния на Россию",
+    "Impact on China and Eurasia": "Влияние на Китай и Евразию",
+    "Impact on Global Situation": "Влияние на мировую обстановку",
+    "Conclusions and Forecasts": "Выводы и прогнозы",
+    "Key Trends of the Period": "Ключевые тенденции периода",
+    "Forecast based on verified facts with probability": "Прогноз на основе верифицированных фактов со степенью вероятности",
+    "Uncertainty factors": "Факторы неопределенности",
+    "What requires monitoring in the next period": "Что требует мониторинга в следующем периоде",
+    "Direct Effects": "Прямые эффекты",
+    "Economic": "Экономические",
+    "Political": "Политические",
+    "Security": "Безопасность",
+    "Social": "Социальные",
+    "Indirect Consequences": "Косвенные последствия",
+    "Opportunities": "Возможности",
+    "Risks": "Риски",
+    "Development of the situation": "Развитие ситуации",
+    "Key consequences": "Ключевые последствия",
+    "Link to Russian interests": "Связь с российскими интересами",
+    "Changes in global balance": "Изменение глобального баланса",
+    "Regional consequences": "Региональные последствия",
+    "Systemic effects": "Системные эффекты",
+    "High": "Высокая",
+    "Medium": "Средняя",
+    "Low": "Низкая"
+}
+
+def translate(text):
+    """Простой перевод на основе словаря"""
+    for eng, rus in TRANSLATION_DICT.items():
+        text = text.replace(eng, rus)
+    return text
+
 # === Конфигурация ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))
@@ -69,7 +107,7 @@ def categorize_articles(articles):
         for category, keywords in CATEGORIES.items():
             if any(keyword in title for keyword in keywords):
                 categorized[category].append(url)
-                break  # Одна статья - одна категория
+                break
     
     return categorized, all_urls
 
@@ -79,7 +117,7 @@ def generate_analytical_summary(categorized_urls, all_articles):
     
     # 1. Исполнительное резюме (10%)
     executive_summary = (
-        f"1. Исполнительное резюме\n"
+        f"Аналитическая записка\n"
         f"За последние сутки зафиксировано {total_articles} новых источников информации. "
         f"Анализ выявил ключевые тенденции, требующие внимания со стороны органов власти и аналитических центров. "
         f"Особое внимание уделяется событиям, имеющим прямое или косвенное влияние на Россию и глобальную обстановку.\n\n"
@@ -89,7 +127,6 @@ def generate_analytical_summary(categorized_urls, all_articles):
     top_events = "2. ТОП-5 критических событий периода\n"
     event_count = 0
     
-    # Сортируем статьи по дате и берем первые 5
     sorted_articles = sorted(all_articles, key=lambda x: x["created_at"], reverse=True)
     for article in sorted_articles[:5]:
         event_count += 1
@@ -111,13 +148,11 @@ def generate_analytical_summary(categorized_urls, all_articles):
     for category, urls in categorized_urls.items():
         if urls:
             thematic_analysis += f"\n• {category}\n"
-            # Получаем полные статьи по URL для описания
-            for url in urls[:3]:  # Не более 3 на категорию
+            for url in urls[:3]:
                 article = next((a for a in all_articles if a["url"] == url), None)
                 if article:
                     thematic_analysis += f"  - {article['title']} [{url}]\n"
             
-            # Тренды и закономерности
             if category == "Россия":
                 thematic_analysis += "  • Тренды: Усиление внимания к внутренней политике и экономическим реформам. [https://example.com/russia-trend]\n"
             elif category == "СВО":
@@ -179,21 +214,21 @@ def generate_analytical_summary(categorized_urls, all_articles):
         conclusions
     )
     
-    # Ограничение длины до 4000 символов для более полного отчета
+    # Ограничение длины до 4000 символов
     return full_report[:4000]
 
 def save_report_to_db(report_content, source_count, categories):
     """Сохраняет сгенерированный отчёт в таблицу analytical_reports"""
     try:
-        # Определяем сегодняшнюю дату для отчета
         report_date = datetime.now(timezone.utc).date()
         
         data = {
             "report_date": report_date.isoformat(),
-            "period_type": "daily",  # Можно расширить для других периодов
+            "period_type": "daily",
             "content": report_content,
             "source_count": source_count,
-            "categories": json.dumps(categories)  # Сохраняем категории как JSON
+            "categories": json.dumps(categories),
+            "is_sent": False
         }
         
         response = supabase.table("analytical_reports").insert(data).execute()
@@ -231,7 +266,6 @@ def trigger_report():
     try:
         logger.info("🔍 Запрос на генерацию отчёта...")
         
-        # Получаем статьи за последние 24 часа
         articles = get_recent_articles()
         
         if not articles:
@@ -241,13 +275,9 @@ def trigger_report():
                 "message": "Нет новых статей для анализа"
             }), 200
         
-        # Классифицируем статьи
         categorized_urls, all_urls = categorize_articles(articles)
-        
-        # Генерируем аналитический отчет
         report = generate_analytical_summary(categorized_urls, articles)
         
-        # Сохраняем отчет в базу данных
         report_id = save_report_to_db(report, len(articles), categorized_urls)
         
         if not report_id:
@@ -257,7 +287,6 @@ def trigger_report():
                 "message": "Ошибка сохранения отчета"
             }), 500
         
-        # Отправляем отчет в Telegram
         import asyncio
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -265,7 +294,6 @@ def trigger_report():
         loop.close()
         
         if success:
-            # Отмечаем отчет как отправленный
             mark_report_as_sent(report_id)
             logger.info(f"✅ Отчёт (ID: {report_id}) успешно отправлен и помечен как отправленный")
             return jsonify({
@@ -302,5 +330,4 @@ def home():
     return "✅ Аналитический сервис работает. Используйте /trigger-report для генерации отчёта.", 200
 
 if __name__ == "__main__":
-    # Для Render используем переменную PORT из окружения
     flask_app.run(host="0.0.0.0", port=PORT, debug=False)
