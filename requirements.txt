@@ -3,3 +3,4 @@ supabase
 Flask
 gunicorn
 python-dotenv
+requests
