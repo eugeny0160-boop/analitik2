@@ -3,4 +3,5 @@ supabase
 Flask
 gunicorn
 python-dotenv
+googletrans
 requests
