@@ -1,5 +1,5 @@
 import os
-import re
+import json
 from datetime import datetime, timedelta, timezone
 from supabase import create_client
 from telegram.ext import Application
@@ -197,7 +197,7 @@ def generate_analytical_report(articles):
         return "Аналитическая записка\nЗа последние сутки не обнаружено значимых событий для анализа."
 
     report = f"Аналитическая записка\n{datetime.now(timezone.utc).strftime('%d %B %Y г.')}\n\n"
-    report += "Событич периода\n\n"
+    report += "ТОП-7 критических событий периода\n\n"
 
     sources = []
     event_count = 0
@@ -224,7 +224,7 @@ def generate_analytical_report(articles):
         report += f"{url}\n"
 
     # Обрезаем до 1000 символов
-    return report[:2500]
+    return report[:1000]
 
 
 async def send_report_to_telegram(report):
@@ -236,6 +236,24 @@ async def send_report_to_telegram(report):
     except Exception as e:
         logger.error(f"Ошибка отправки в Telegram: {e}")
         return False
+
+
+def save_report_to_db(report_content, source_count):
+    """Сохраняет отчёт в таблицу analytical_reports."""
+    try:
+        report_date = datetime.now(timezone.utc).date()
+        data = {
+            "report_date": report_date.isoformat(),
+            "period_type": "daily",
+            "content": report_content,
+            "source_count": source_count,
+            "is_sent": True,
+            "generated_at": datetime.now(timezone.utc).isoformat()
+        }
+        supabase.table("analytical_reports").insert(data).execute()
+        logger.info("Отчёт успешно сохранён в базу данных.")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения отчёта в базу данных: {e}")
 
 
 @flask_app.route("/trigger-report", methods=["GET"])
@@ -266,7 +284,8 @@ def trigger_report():
             logger.error("❌ Не удалось отправить отчет в Telegram")
             return jsonify({"status": "error", "message": "Не удалось отправить отчет в Telegram"}), 500
 
-        logger.info(f"✅ Отчет успешно отправлен. Объём: {len(report)} символов.")
+        save_report_to_db(report, len(articles))
+        logger.info(f"✅ Отчет успешно отправлен и сохранён. Объём: {len(report)} символов.")
         return jsonify({
             "status": "success",
             "message": "Аналитическая записка успешно сгенерирована и отправлена",
