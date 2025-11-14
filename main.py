@@ -197,7 +197,7 @@ def generate_analytical_report(articles):
         return "Аналитическая записка\nЗа последние сутки не обнаружено значимых событий для анализа."
 
     report = f"Аналитическая записка\n{datetime.now(timezone.utc).strftime('%d %B %Y г.')}\n\n"
-    report += "ТОП-7 критических событий периода\n\n"
+    report += "Событич периода\n\n"
 
     sources = []
     event_count = 0
@@ -224,7 +224,7 @@ def generate_analytical_report(articles):
         report += f"{url}\n"
 
     # Обрезаем до 1000 символов
-    return report[:1000]
+    return report[:2500]
 
 
 async def send_report_to_telegram(report):
