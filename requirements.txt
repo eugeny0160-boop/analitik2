@@ -4,4 +4,4 @@ Flask
 gunicorn
 requests
 deep-translator
-pip install googletrans
+googletrans
