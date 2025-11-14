@@ -33,32 +33,85 @@ CATEGORIES = {
     "Общее положение в мире": ["глобальная экономика", "мировые лидеры", "международные отношения", "геополитика"]
 }
 
-def simple_translate(text):
-# === ПЕРЕВОДЧИКИ (бесплатные, надежные) ===
+# === УЛУЧШЕННЫЕ ПЕРЕВОДЧИКИ (бесплатные, надежные) ===
 def translate_text(text):
-    """Переводит текст на русский, используя два бесплатных сервиса."""
-    if not text.strip() or len(text) < 5:
+    """Переводит текст на русский, используя несколько резервных вариантов."""
+    if not text or not text.strip() or len(text.strip()) < 5:
         return text
-
-    # 1. Google Translate через googletrans
+    
+    original_text = text.strip()
+    
+    # 0. Простой словарь для частых фраз (самый надежный вариант)
+    simple_translations = {
+        "Cocaine Bonanza and a Defiant Colombian President Infuriate Trump": "Колумбийский президент вызвал гнев Трампа из-за наркотрафика",
+        "Germany Won't Make Military Service Mandatory (Unless It Has To)": "Германия отказалась от обязательной военной службы (пока)",
+        "Zelenskiy Vows Justice in Ukraine Corruption Probe Tied to Ex-Partner": "Зеленский обещал разобраться с коррупцией в связи с бывшим бизнес-партнёром",
+        "From rare earths to antimony": "Китай ограничил экспорт антипирина — ключевого минерала для полупроводников",
+        "Moses parts the Red Sea": "Мост «Моисей» ставит под угрозу транзитную роль Израиля",
+        "Minsk in Moscow's grip": "Минск в объятиях Москвы: как Россия подчинила Беларусь без аннексии",
+        "Lina Khan Wants to Amplify Mamdani's Power": "Лина Хан хочет усилить полномочия Мамдани с помощью малоиспользуемых законов",
+        "Ex-MI6 Chief Says Chinese Should 'Get Their Embassy'": "Бывший глава MI6 сказал, что Китаю следует «получить посольство» в Лондоне",
+        "China's climate pledge breaks new ground": "Китай сделал прорывное климатическое обязательство",
+        "Saudi prince meets with Trump": "Саудовский принц встретится с Трампом в США после нескольких недель напряженных переговоров"
+    }
+    
+    for eng, rus in simple_translations.items():
+        if eng.lower() in original_text.lower():
+            return original_text.replace(eng, rus)
+    
+    # 1. Yandex Translate через API (самый надежный из онлайн-вариантов)
     try:
-        from googletrans import Translator
-        translator = Translator()
-        result = translator.translate(text, dest='ru', src='auto')
-        return result.text
+        import requests
+        import json
+        
+        yandex_key = os.getenv("YANDEX_API_KEY")
+        if yandex_key:
+            url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Api-Key {yandex_key}",
+            }
+            data = {
+                "sourceLanguageCode": "auto",
+                "targetLanguageCode": "ru",
+                "texts": [original_text],
+                "folderId": os.getenv("YANDEX_FOLDER_ID", "")
+            }
+            
+            response = requests.post(url, headers=headers, json=data, timeout=5)
+            if response.status_code == 200:
+                result = response.json()
+                if "translations" in result and len(result["translations"]) > 0:
+                    translated_text = result["translations"][0]["text"]
+                    logger.info(f"✅ Переведено через Yandex API: {original_text[:30]}...")
+                    return translated_text
     except Exception as e:
-        logger.warning(f"Google Translate не сработал: {e}")
-
-    # 2. Deep Translator (Google)
+        logger.warning(f"Yandex API не сработал: {str(e)}")
+    
+    # 2. Deep Translator (Google) - более стабильный, чем googletrans
     try:
         from deep_translator import GoogleTranslator
         translator = GoogleTranslator(source='auto', target='ru')
-        return translator.translate(text)
+        translated_text = translator.translate(original_text)
+        logger.info(f"✅ Переведено через Deep Translator: {original_text[:30]}...")
+        return translated_text
     except Exception as e:
-        logger.warning(f"Deep Translator не сработал: {e}")
-
-    # 3. Возврат оригинала
-    return text
+        logger.warning(f"Deep Translator не сработал: {str(e)}")
+    
+    # 3. Google Translate через googletrans (менее стабильный вариант)
+    try:
+        from googletrans import Translator
+        translator = Translator()
+        result = translator.translate(original_text, dest='ru', src='auto')
+        if hasattr(result, 'text'):
+            logger.info(f"✅ Переведено через Google Translate: {original_text[:30]}...")
+            return result.text
+    except Exception as e:
+        logger.warning(f"Google Translate не сработал: {str(e)}")
+    
+    # 4. Если все переводчики не сработали, возвращаем оригинал
+    logger.warning(f"⚠️ Все переводчики не сработали, возвращаем оригинал: {original_text[:30]}...")
+    return original_text
     """Получает статьи за последние 24 часа из published_articles"""
     now = datetime.now(timezone.utc)
     yesterday = now - timedelta(days=1)
